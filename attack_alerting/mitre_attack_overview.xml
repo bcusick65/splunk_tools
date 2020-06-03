@@ -1,0 +1,265 @@
+<form theme="dark">
+  <label>MITRE ATT&amp;CK Overview</label>
+  <description>ATT&amp;CK Matrix applied to your organization</description>
+  <search id="mitre_base_1">
+    <query>index=risk mitre_tactic=* earliest=-7d | fields _time mitre_tactic mitre_technique search_name user src dest mitre_tactic_combined mitre_technique_combined</query>
+  </search>
+  <search id="sseanalytics_base_1">
+    <query>
+    | sseanalytics
+        | lookup use_cases.csv title AS "usecase" OUTPUT order_title AS use_case_order_title
+        | eval "Use Case Orig"=if(isnull('usecase'),"Other",'usecase')
+        | eval "Use Case"=if(isnull(use_case_order_title), "9_Other",use_case_order_title)
+        | eval "Has Data"=if(data_available="Good" OR data_available="Mixed", "Yes", "No")
+        | eval Status=case(
+        'enabled'="Yes" AND 'Has Data'="Yes","Active",
+        'enabled'!="Yes" AND 'Has Data'="Yes","Available",
+        1=1,"Needs data"
+        )
+        | eval App=displayapp, Enabled=enabled, Title=name, Journey=journey, "Data Source"=datasource, "Data Source Category"=data_source_categories_display
+        | where (mitre_tactic_display!="" AND mitre_tactic_display!="None") OR (mitre_technique_display!="" AND mitre_technique_display!="None" AND mvcount(mitre_technique_display)&gt;0)
+        | eval "MITRE Tactic"=if('mitre_tactic_display'="","-",'mitre_tactic_display'), "MITRE Technique"=mitre_technique_display, "MITRE Threat Group"=mitre_threat_groups, "MITRE Platforms"=mitre_platforms |  eval Status=if(in(datasource,"*"), "Selected",Status)
+| search Status="*" "App"="*" "Data Source"="*" "Data Source Category"="*" "bookmark_status"="*" "highlight"="*" "MITRE Tactic"="*" "MITRE Technique"="*" "MITRE Threat Group"="*" "MITRE Platforms" IN(Enterprise)
+| where like(lower(Title),"%".lower("")."%") OR like(lower(Description),"%".lower("")."%") OR like(lower('Data Source'),"%".lower("")."%") OR like(lower('Data Source Category'),"%".lower("")."%") OR like(lower('Use Case'),"%".lower("")."%")
+| eval "Selected_New"=case(isnotnull('Data Source') AND in('Data Source',"*"), 'Selected',isnotnull('Data Source') AND NOT in('Data Source',"*"),0,1=1,'Selected')
+| eval m="Move the overlapping entries to Phase 2 so they dont get lost while filtering"
+| fields - m
+| eval "Needs data"=if('Selected_New'=0 AND 'Selected'&gt;0, coalesce('Needs data',0)+coalesce('Selected',0), coalesce('Needs data',0))
+| rename "Selected_New" AS "Selected"
+
+| eval Total='Active'+'Available'+'Needs data'+'Selected'
+| sort Journey
+| eval "Use Case"='Use Case Orig',"Bookmark Status"=bookmark_status_display, Featured=highlight, "Data Availability"=data_available,Enabled=enabled,"Data Coverage"=data_available_numeric
+| eval "Data Source"=mvdedup('Data Source')
+| table Journey Status Title Description "Data Source" "Data Source Category" "Use Case" "MITRE Tactic" "MITRE Technique" App "Bookmark Status" Featured Enabled "Data Availability" "Data Coverage"
+| stats count by Status
+| addcoltotals
+| eval percent_missing=round((282/370)*100,2)
+| eval percent_available=round((85/370)*100,2)
+| eval percent_enabled=round((3/370)*100,2)
+</query>
+    <earliest>-4h</earliest>
+    <latest>now</latest>
+  </search>
+  <fieldset submitButton="false">
+    <input type="time" token="field1">
+      <label></label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+  </fieldset>
+  <row>
+    <panel>
+      <single>
+        <title>OotB Content Enabled</title>
+        <search base="sseanalytics_base_1">
+          <query>
+| table percent_enabled
+| head 1</query>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="numberPrecision">0.00</option>
+        <option name="rangeColors">["0xdc4e41","0xf8be34","0x53a051"]</option>
+        <option name="rangeValues">[25,70]</option>
+        <option name="unit">%</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>OotB Content without Data Available</title>
+        <search base="sseanalytics_base_1">
+          <query>| table percent_missing
+| head 1</query>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="numberPrecision">0.00</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xf1813f","0xdc4e41"]</option>
+        <option name="rangeValues">[30,50,80]</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="unit">%</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>OotB Content NOT Enabled, but Available</title>
+        <search base="sseanalytics_base_1">
+          <query>| table percent_available
+| head 1</query>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="numberPrecision">0.00</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[5,25]</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="unit">%</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Active Tactics</title>
+      <chart>
+        <search base="mitre_base_1">
+          <query>stats count by mitre_tactic_combined</query>
+        </search>
+        <option name="charting.axisLabelsX.majorLabelStyle.overflowMode">ellipsisNone</option>
+        <option name="charting.axisLabelsX.majorLabelStyle.rotation">0</option>
+        <option name="charting.axisTitleX.visibility">visible</option>
+        <option name="charting.axisTitleY.visibility">visible</option>
+        <option name="charting.axisTitleY2.visibility">visible</option>
+        <option name="charting.axisX.abbreviation">none</option>
+        <option name="charting.axisX.scale">linear</option>
+        <option name="charting.axisY.abbreviation">none</option>
+        <option name="charting.axisY.scale">linear</option>
+        <option name="charting.axisY2.abbreviation">none</option>
+        <option name="charting.axisY2.enabled">0</option>
+        <option name="charting.axisY2.scale">inherit</option>
+        <option name="charting.chart">pie</option>
+        <option name="charting.chart.bubbleMaximumSize">50</option>
+        <option name="charting.chart.bubbleMinimumSize">10</option>
+        <option name="charting.chart.bubbleSizeBy">area</option>
+        <option name="charting.chart.nullValueMode">gaps</option>
+        <option name="charting.chart.showDataLabels">none</option>
+        <option name="charting.chart.sliceCollapsingThreshold">0.01</option>
+        <option name="charting.chart.stackMode">default</option>
+        <option name="charting.chart.style">shiny</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.layout.splitSeries">0</option>
+        <option name="charting.layout.splitSeries.allowIndependentYRanges">0</option>
+        <option name="charting.legend.labelStyle.overflowMode">ellipsisMiddle</option>
+        <option name="charting.legend.mode">standard</option>
+        <option name="charting.legend.placement">right</option>
+        <option name="charting.lineWidth">2</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="trellis.enabled">0</option>
+        <option name="trellis.scales.shared">1</option>
+        <option name="trellis.size">medium</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Alert Count - Recognized Tactics/Techniques</title>
+      <single>
+        <search base="mitre_base_1">
+          <query>stats count</query>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[50,200]</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="trellis.enabled">0</option>
+        <option name="trellis.scales.shared">1</option>
+        <option name="trellis.size">medium</option>
+        <option name="unit">Alerts</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Active Techniques</title>
+      <chart>
+        <search base="mitre_base_1">
+          <query>stats count by mitre_technique_combined</query>
+        </search>
+        <option name="charting.axisLabelsX.majorLabelStyle.overflowMode">ellipsisNone</option>
+        <option name="charting.axisLabelsX.majorLabelStyle.rotation">0</option>
+        <option name="charting.axisTitleX.visibility">visible</option>
+        <option name="charting.axisTitleY.visibility">visible</option>
+        <option name="charting.axisTitleY2.visibility">visible</option>
+        <option name="charting.axisX.abbreviation">none</option>
+        <option name="charting.axisX.scale">linear</option>
+        <option name="charting.axisY.abbreviation">none</option>
+        <option name="charting.axisY.scale">linear</option>
+        <option name="charting.axisY2.abbreviation">none</option>
+        <option name="charting.axisY2.enabled">0</option>
+        <option name="charting.axisY2.scale">inherit</option>
+        <option name="charting.chart">pie</option>
+        <option name="charting.chart.bubbleMaximumSize">50</option>
+        <option name="charting.chart.bubbleMinimumSize">10</option>
+        <option name="charting.chart.bubbleSizeBy">area</option>
+        <option name="charting.chart.nullValueMode">gaps</option>
+        <option name="charting.chart.showDataLabels">none</option>
+        <option name="charting.chart.sliceCollapsingThreshold">0.01</option>
+        <option name="charting.chart.stackMode">default</option>
+        <option name="charting.chart.style">shiny</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.layout.splitSeries">0</option>
+        <option name="charting.layout.splitSeries.allowIndependentYRanges">0</option>
+        <option name="charting.legend.labelStyle.overflowMode">ellipsisMiddle</option>
+        <option name="charting.legend.mode">standard</option>
+        <option name="charting.legend.placement">right</option>
+        <option name="charting.lineWidth">2</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="trellis.enabled">0</option>
+        <option name="trellis.scales.shared">1</option>
+        <option name="trellis.size">medium</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <title>Tactics over Time</title>
+        <search base="mitre_base_1">
+          <query>timechart count by mitre_tactic_combined usenull=f</query>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+    <panel>
+      <chart>
+        <title>Techniques over Time</title>
+        <search base="mitre_base_1">
+          <query>timechart count by mitre_technique_combined usenull=f</query>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Tactics and Techniques by User</title>
+      <table>
+        <search base="mitre_base_1">
+          <query>stats values(mitre_tactic_combined) as Tactic values(mitre_technique_combined) as Techniques values(search_name) as Alert dc(mitre_tactic) as count by user
+| sort - count
+| fields - count</query>
+        </search>
+        <option name="count">10</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">true</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+      </table>
+    </panel>
+    <panel>
+      <title>Tactics and Techniques by Destination</title>
+      <table>
+        <search base="mitre_base_1">
+          <query>stats values(mitre_tactic_combined) as Tactic values(mitre_technique_combined) as Techniques values(search_name) as Alert dc(mitre_tactic) as count by dest
+| sort - count
+| fields - count</query>
+        </search>
+        <option name="count">10</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">true</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+      </table>
+    </panel>
+  </row>
+</form>

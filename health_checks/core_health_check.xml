@@ -1,0 +1,651 @@
+<form theme="dark">
+  <label>Core Health Check</label>
+  <fieldset submitButton="true" autoRun="true">
+    <input type="text" token="sh_tok">
+      <label>Enter your SHs</label>
+    </input>
+    <input type="multiselect" token="sh_list" searchWhenChanged="false">
+      <label>SH List</label>
+      <valuePrefix>host="</valuePrefix>
+      <valueSuffix>"</valueSuffix>
+      <delimiter> OR </delimiter>
+      <fieldForLabel>field3</fieldForLabel>
+      <fieldForValue>field3</fieldForValue>
+      <search>
+        <query>| makeresults
+           | eval prevshlist="$form.sh_list$"
+           | eval newshlist="$sh_tok$"
+           | makemv delim="," prevshlist
+           | makemv delim=" " newshlist
+           | eval field3=mvappend(prevshlist,newshlist)
+           | eval valcount= mvcount(field3)
+           | eval field3=if(valcount&gt;1,mvfilter(NOT match(field3,"all")),field3)
+           </query>
+        <done>
+          <condition match="$job.resultCount$&gt;0">
+            <eval token="form.sh_list">case(isnotnull($result.field3$),$result.field3$)</eval>
+          </condition>
+        </done>
+        <finalized>
+          <condition match="$job.resultCount$&gt;0">
+            <unset token="sh_tok"></unset>
+          </condition>
+        </finalized>
+      </search>
+      <choice value="*">All</choice>
+      <default>*</default>
+      <initialValue>*</initialValue>
+      <change>
+        <eval token="form.sh_list">if(mvcount('form.sh_list')=0,"*",if(mvcount('form.sh_list')!=1,mvfilter('form.sh_list'!="*"),'form.sh_list'))</eval>
+        <unset token="form.sh_tok"></unset>
+      </change>
+    </input>
+  </fieldset>
+  <row>
+    <panel>
+      <title>Hardware</title>
+      <table>
+        <title>Splunk Environment Servers</title>
+        <search>
+          <query>| rest splunk_server=* /services/server/info
+| eval cpu_core_count = if(isnotnull(numberOfVirtualCores), numberOfVirtualCores, numberOfCores)
+| eval physical_memory_GB = round(physicalMemoryMB / 1024, 0)
+| fields splunk_server server_roles version cpu_core_count physical_memory_GB os_name
+| eval severity_level = case(cpu_core_count &lt;= 4 OR physical_memory_GB &lt;= 4, 2, cpu_core_count &lt; 12 OR physical_memory_GB &lt; 12, 1, cpu_core_count &gt;= 12 AND physical_memory_GB &gt;= 12, 0, true(), -1)
+| rename splunk_server AS Instance cpu_core_count AS "CPU Cores (current / recommended)" physical_memory_GB AS "Physical Memory GB (current / recommended)"
+| fieldformat cpu_core_count (current / recommended) = 'cpu_core_count (current / recommended)'." / 12"
+| fieldformat Physical Memory GB (current / recommended) = 'Physical Memory GB (current / recommended)'." / 12"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="severity_level">
+          <colorPalette type="map">{"2":#D93F3C,"1":#d9d13c,"0":#3cd968}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <title>Storage IO Stats - Environment Wide</title>
+        <search>
+          <query>index=_introspection sourcetype="splunk_resource_usage" data.avg_total_ms&gt;0 component=IOstats| timechart avg("data.avg_total_ms") by host | eval threshold = 10</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.axisTitleY.text">Avg MS per Host</option>
+        <option name="charting.axisY2.enabled">0</option>
+        <option name="charting.chart">line</option>
+        <option name="charting.chart.nullValueMode">zero</option>
+        <option name="charting.chart.overlayFields">threshold</option>
+        <option name="charting.fieldColors">{"threshold":#ff0000}</option>
+        <option name="charting.chart.showDataLabels">none</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Active ulimit settings (checking for restarts over the last 30 days) - Environment Wide</title>
+        <search>
+          <query>index=_internal earliest=-30d@d sourcetype=splunkd ulimit ("open files" OR "user processes" OR "data file size" OR "data segment size")
+| rex "files:\s+(?&lt;open_files&gt;\d+)"
+| rex "processes:\s+(?&lt;user_processes&gt;\d+)"
+| rex "data\sfile\ssize\:\s+(?&lt;data_file_size&gt;\w+)"
+| rex "data\ssegment\ssize\:\s+(?&lt;data_segment_size&gt;\w+)"
+| stats latest(open_files) AS open_files latest(user_processes) AS user_processes latest(data_segment_size) AS data_segment_size latest(data_file_size) AS data_file_size by host
+| eval Status=case(open_files&lt;=8192 OR user_processes&lt;=8192 OR data_segment_size!="unlimited" OR data_file_size!="unlimited", "severe",1=1 ,"low")
+| sort 0 - Status
+| rename open_files AS "Open Files (-n)" user_processes AS "User Processes (-u)" data_segment_size AS "Data Segment Size (-d)" data_file_size AS "Data File Size (-f)"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <format type="color" field="Status">
+          <colorPalette type="map">{"severe":#D93F3C,"low":#3cd968}</colorPalette>
+        </format>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+    <panel>
+      <table>
+        <title>THP Settings (checking for restarts over the last 30 days) - Environment Wide</title>
+        <search>
+          <query>index=_internal earliest=-30d@d sourcetype=splunkd ulimit transparent hugetables OR hugepage
+| stats latest(enabled) AS Enabled latest(defrag) AS Defrag BY host
+| eval Status=if(Enabled=="never" AND Defrag=="never", "low", "severe")
+| sort 0 – Status</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <format type="color" field="Status">
+          <colorPalette type="map">{"severe":#D93F3C,"low":#3cd968}</colorPalette>
+        </format>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Getting Data In</title>
+      <table>
+        <title>Indexing Distribution per Indexer - Environment Wide</title>
+        <search>
+          <query>index=_internal sourcetype=splunkd log_level=INFO TcpOutputProc Connected
+| stats dc(idx) AS idx_count values(idx) by host
+| eventstats mode(idx_count) AS mode_idx
+| eval Status=if(mode_idx!=idx_count, "severe", "low")
+| eval indexer_deviation=idx_count-mode_idx
+| fields - mode*
+| sort 0 Status
+| where 1==1
+| rename idx_count as "Indexer Count", values(idx) as "Indexer Endpoints", host as "Source Machine", indexer_deviation as "Indexer Deviation"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="Status">
+          <colorPalette type="map">{"severe":#D93F3C,"low":#3cd968}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Future Timestamped Data</title>
+        <search>
+          <query>| tstats max(_time) as latest_time where index=* by _time, index, sourcetype, host span=1d
+| eval host=lower(host)
+| eval index=lower(index)
+| eval sourcetype=trim(lower(sourcetype), "\"")
+| stats max(latest_time) as latest_time by _time index, sourcetype, host
+| eval howLateSecs=now() - latest_time
+| eval h=host
+| eval i=index
+| eval s=sourcetype
+| eval Last=strftime(latest_time, "%D %H:%M:%S")
+| stats min(howLateSecs) as howLateSecs max(latest_time) as latest_time by host sourcetype index h i s
+| where (latest_time &gt; now() + 100) AND (now() - latest_time &lt; 2592000)
+| sort - howLateSecs
+| eval howLate=if(howLateSecs &lt; 0,"-".tostring(abs(howLateSecs),"duration"),tostring(howLateSecs,"duration"))
+| rex field=howLate mode=sed "s/\+/ days /"
+| rex field=howLate mode=sed "s/^1 days/1 day /"
+| eval h=host
+| eval i=index
+| eval s=sourcetype
+| eval latest_time=strftime(latest_time, "%m/%d/%Y %H:%M:%S")
+| eval Status="Severe"
+| table h s i latest_time howLate Status
+| rename howLate AS "Time Since Last Event" i AS "Event Index" s AS "Event Sourcetype" h AS "Event Host" latest_time as "Last Event Timestamp"</query>
+          <earliest>now</earliest>
+          <latest>+7d@d</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="Status">
+          <colorPalette type="map">{"Severe":#D93F3C}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Index Retention Settings, per-indexer breakdown included</title>
+        <search>
+          <query>| rest /services/server/info splunk_server=*
+| eval role=if(server_roles="indexer","indexer","not indexer")
+| fields splunk_server role
+| join type=inner max=0 splunk_server
+    [ rest /services/admin/indexes
+    | fields splunk_server title disabled coldToFrozenDir coldToFrozenScript frozenTimePeriodInSecs maxHotSpanSecs maxDataSize homePath coldPath maxHotBuckets maxWarmDBCount maxTotalDataSizeMB ]
+| eval frozen_configured=case(len(coldToFrozenDir)&gt;0,coldToFrozenDir,len(coldToFrozenScript)&gt;0,coldToFrozenScript,1=1,"Delete")
+| eval ayear = floor(frozenTimePeriodInSecs/86400/365)
+| eval aday = (frozenTimePeriodInSecs/86400) % 365
+| eval ret = ayear . " years, " . aday . " days"
+| eval hyear = floor(maxHotSpanSecs/86400/365)
+| eval hday = (maxHotSpanSecs/86400) % 365
+| eval hotret = hyear . " years, " . hday . " days"
+| eval idxdisabled=if(disabled == 0, "False", "True")
+| eval hotdbmax=case(maxDataSize == "auto", "750", maxDataSize == "auto_high_volume", "10240", isint(maxDataSize), maxDataSize)
+| rex mode=sed field=homePath "s#[/\\\\].*##"
+| rex mode=sed field=coldPath "s#[/\\\\].*##"
+| sort role
+| streamstats dc(role) as rolecount by title
+| eval keep=if(rolecount=1 AND role="not indexer",1,0)
+| search (keep=1 OR role=indexer) NOT (title=splunklogger AND idxdisabled="True")
+| join type=left
+    [ eventcount summarize=f index=_* index=*
+    | stats sum(count) as count by index, server
+    | rename index as title server as splunk_server]
+| sort splunk_server
+| stats list(splunk_server) AS Indexer list(idxdisabled) AS Disabled list(homePath) as homeVolume list(coldPath) as coldVolume list(hotret) AS maxHotSpanSecs list(hotdbmax) AS maxDataSize list(maxHotBuckets) AS MaxHotBuckets list(maxWarmDBCount) AS MaxWarmDBCount list(ret) AS Archive list(maxTotalDataSizeMB) AS MaxTotalDataSizeMB list(frozen_configured) as frozen_configured list(count) as count by title
+| rename title AS Index, maxHotSpanSecs AS "Max Bucket Time", MaxHotBuckets AS "Max Hot Buckets", maxDataSize AS "Max Bucket Size (MB)", MaxWarmDBCount AS "Max Warm Buckets", Archive AS "Archive Time", MaxTotalDataSizeMB AS "Max Total Data Size (MB)" frozen_configured as "Cold To Frozen"
+| sort Indexer</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <format type="color" field="homeVolume">
+          <colorPalette type="map">{"$SPLUNK_DB":#d4d93c,"low":#3c83d9}</colorPalette>
+        </format>
+        <format type="color" field="coldVolume">
+          <colorPalette type="map">{"$SPLUNK_DB":#d4d93c,"low":#3c83d9}</colorPalette>
+        </format>
+        <format type="color" field="Max Total Data Size (MB)">
+          <colorPalette type="map">{"500000":#D93F3C}</colorPalette>
+        </format>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Index/Sourcetype Breakdown</title>
+        <search>
+          <query>| tstats count WHERE index=* BY index sourcetype
+| sort - count
+| eventstats sum(count) AS total by index
+| stats sum(count) AS sum_count dc(sourcetype) AS sourcetype_count list(sourcetype) AS sourcetype list(count) AS count list(eval(round(((count/total)*100),2)."%")) AS percent_coverage by index
+| sort - sum_count</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <format type="color" field="index">
+          <colorPalette type="map">{"main":#D93F3C}</colorPalette>
+        </format>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Data Ingestion Issues</title>
+        <search>
+          <query>index=_internal earliest=-24h sourcetype=splunkd component=LineBreakingProcessor OR component=DateParserVerbose OR component=Aggregator* NOT data_sourcetype=splunk_audit
+| rex field=event_message "Context\:\s\S+\|host\=\S+\|(?&lt;Sourcetype&gt;[^\|]+)\|"
+| eventstats sparkline by component
+| cluster showcount=t
+| table _time, component, sparkline, cluster_count, Sourcetype, event_message
+| sort 0 -cluster_count
+| rename sparkline AS sparkline_by_component</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Automatically Assigned Sourcetypes</title>
+        <search>
+          <query>| tstats summariesonly=t count AS event_count dc(source) AS source dc(host) AS hosts WHERE index=* GROUPBY sourcetype index
+| regex sourcetype="\-\d+$|too_small"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Forwarder Throttling</title>
+        <search>
+          <query>index=_internal earliest=-24h sourcetype=splunkd ThruputProcessor data maxKBps
+| rex "throughput\s\((?&lt;maxKBps&gt;\d+)"
+| stats count sparkline(count) avg(maxKBps) by host
+| eval avg(maxKBps)=round('avg(maxKBps)', 2)
+| sort 0 - count</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>General Errors and Warnings</title>
+      <table>
+        <title>Environment Warning and Error Clusters</title>
+        <search>
+          <query>index=_internal earliest=-24h@h sourcetype=splunkd (log_level="WARN" OR log_level="ERROR" OR log_level="CRIT" OR log_level="FATAL")  | eventstats sparkline by component, log_level | cluster showcount=true | table _time, log_level, cluster_count component, sparkline _raw | sort - cluster_count | rename sparkline AS sparkline_by_component</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Searching and Reporting</title>
+      <table>
+        <title>Long-running Searches</title>
+        <search>
+          <query>index=_internal sourcetype=scheduler result_count
+| extract pairdelim=",", kvdelim="=", auto=f
+| stats avg(result_count) min(result_count) max(result_count), sparkline avg(run_time) min(run_time) max(run_time) sum(run_time) values(host) AS hosts count AS execution_count by savedsearch_name, app
+| join savedsearch_name type=outer
+    [| rest /servicesNS/-/-/saved/searches
+    | fields title eai:acl.owner cron_schedule dispatch.earliest_time dispatch.latest_time search
+    | rename title AS savedsearch_name eai:acl.app AS App eai:acl.owner AS Owner cron_schedule AS "Cron Schedule" dispatch.earliest_time AS "Dispatch Earliest Time" dispatch.latest_time AS "Dispatch Latest Time"]
+| rename savedsearch_name AS title
+| makemv delim="," values(host)
+| sort - avg(run_time)
+| table title, app, Owner, search, "Dispatch Earliest Time" "Dispatch Latest Time" "Cron Schedule" hosts, execution_count, sparkline, *(result_count), sum(run_time) *(run_time)</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <title>Historical Search Concurrency</title>
+        <search>
+          <query>index=_internal source=*metrics.log group=search_concurrency "system total" NOT user=*
+| replace "splkes01" with "ch-demo-zeus" in host
+| join host
+    [| rest splunk_server=* /services/configs/conf-limits
+    | fields base_max_searches max_searches_per_cpu splunk_server
+    | search base_max_searches=*
+    | join splunk_server
+        [| rest splunk_server=* /services/server/info
+        | fields splunk_server numberOfCores]
+    | eval search_ceiling=base_max_searches+(max_searches_per_cpu*numberOfCores)
+    | fields splunk_server search_ceiling
+    | rename splunk_server AS host]
+| timechart max(active_hist_searches) AS "Max Concurrent Searches" max(search_ceiling) AS "Concurrent Search Limit"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="charting.chart.overlayFields">"Concurrent Search Limit"</option>
+        <option name="charting.fieldColors">{"Concurrent Search Limit":#ff0000}</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <title>Real-time Searches</title>
+        <search>
+          <query>index=_internal source=*metrics.log group=search_concurrency "system total" NOT user=*
+| timechart max(active_realtime_searches) AS "Max Real-Time Searches" by host</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+    <panel>
+      <table>
+        <title>REST *Configured* RT Searches</title>
+        <search>
+          <query>| rest splunk_server=* /servicesNS/-/-/search/jobs
+| search eventSorting=realtime
+| table splunk_server label title eai:acl.app eai:acl.owner eventSearch</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Scheduler Errors</title>
+        <search>
+          <query>index=_internal earliest=-24h@h source=*scheduler.log NOT INFO
+| rex field=savedsearch_id "^(?&lt;Owner&gt;[\w+]+)\;(?&lt;App&gt;[\w]+)\;(?&lt;savedsearch_name&gt;[^\"]+)"
+| stats count as "# of Errors" by savedsearch_name App Owner message
+| sort - "# of Errors"
+| rename savedsearch_name AS "Saved Search", message as Message</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <chart>
+        <title>Skipped Searches</title>
+        <search>
+          <query>index=_internal $sh_list$ source=*metrics.log group=searchscheduler
+| timechart partial=false span=10m sum(dispatched) AS Started sum(skipped) AS Skipped</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Search Pattern Breakdown</title>
+        <search>
+          <query>index=_audit earliest=-24h@h action=search sourcetype=audittrail info=granted search_id=*
+| rex field=apiStartTime "\'?(?&lt;apiStartTime&gt;[^\']+)"
+| rex field=apiEndTime "\'?(?&lt;apiEndTime&gt;[^\']+)"
+| eval search_time=tostring(strptime(apiEndTime,"%a %b %d %H:%M:%S %Y")-strptime(apiStartTime,"%a %b %d %H:%M:%S %Y"))
+| eval search_range=case(apiStartTime=="ZERO_TIME","All Time",
+    search_time &lt;= 300, "5 Minutes",
+    search_time &lt;= 900 AND search_time &gt; 300, "15 Minutes",
+    search_time &lt;= 1800 AND search_time &gt; 1800, "30 Minutes",
+    search_time &lt;= 3600 AND search_time &gt; 900, "1 Hour",
+    search_time &lt;= 14400 AND search_time &gt; 3600, "4 Hours",
+    search_time &lt;= 90000 AND search_time &gt; 14400, "1 Day",
+    search_time &lt;= 691200 AND search_time &gt; 90000, "7 Days",
+    search_time &lt;= 2678400 AND search_time &gt; 691200, "30 Days",
+    search_time &lt;= 3974400 AND search_time &gt; 2678400, "45 Days",
+    search_time &gt; 3974400, "45 Days +",
+    search_time==search_time, "Other")
+| eval user=if(user="","N/A",user)
+| chart limit=0 count over user by search_range
+| fillnull user "5 Minutes" "15 Minutes" "30 Minutes" "1 Hour" "4 Hours" "1 Day" "7 Days" "30 Days" "45 Days" "45 Days +" "All Time"
+| table user "5 Minutes" "15 Minutes" "30 Minutes" "1 Hour" "4 Hours" "1 Day" "7 Days" "30 Days" "45 Days" "45 Days +" "All Time"
+| addcoltotals</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="dataOverlayMode">heatmap</option>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Internal Index Searchability</title>
+        <search>
+          <query>| rest splunk_server=* /services/authorization/roles | eval type=if(match(title,"^(?:admin|can_delete|power|splunk-system-role|user|ess_admin|ess_analyst|ess_user)$"),"default","custom") | eval capabilities=(mvcount(mvappend(capabilities,"",imported_capabilities)) - 1) | fillnull value="" | rename title as role | eval imported_roles=mvjoin(imported_roles,", ") | eval srchIndexesAllowed=mvjoin(srchIndexesAllowed,", ") | eval srchIndexesDefault=mvjoin(srchIndexesDefault,", ") | join max=1 overwrite=1 type=inner usetime=0 [ | rest splunk_server=local /services/data/indexes | fields title | eval type=if(match(title,"^_\\w+$"),"c_internal","c_non-internal") | eval x="woot" | stats count by type, x | xyseries x type count | fields - x] | makemv delim=", " srchIndexesAllowed | eval totalAccess=case((isnotnull(mvfind(srchIndexesAllowed,"^_\\*$")) AND isnotnull(mvfind(srchIndexesAllowed,"^\\*$"))),('c_non-internal' + c_internal),isnotnull(mvfind(srchIndexesAllowed,"^\\*$")),('c_non-internal' + if(isnull(mvcount(mvfilter(match(srchIndexesAllowed,"^_[^\\*]+$")))),0,mvcount(mvfilter(match(srchIndexesAllowed,"^_[^\\*]+$"))))),isnotnull(mvfind(srchIndexesAllowed,"^_\\*$")),(c_internal + if(isnull(mvcount(mvfilter(match(srchIndexesAllowed,"^[^_]+$")))),0,mvcount(mvfilter(match(srchIndexesAllowed,"^[^_]+$"))))),(srchIndexesAllowed == ""),0,(isnull(mvfind(srchIndexesAllowed,"^_\\*$")) AND isnull(mvfind(srchIndexesAllowed,"^\\*$"))),mvcount(srchIndexesAllowed)) | fillnull value="noidea" totalAccess | fields - c_* | rename srchIndexesAllowed as accessible_indexes | mvcombine accessible_indexes | rex field=accessible_indexes mode=sed "s/_\*/All internal indexes/g" | rex field=accessible_indexes mode=sed "s/\*/All non-internal indexes/g" | rex field=srchIndexesDefault mode=sed "s/_\*/All internal indexes/g" | rex field=srchIndexesDefault mode=sed "s/\*/All non-internal indexes/g" | fields role, type, capabilities, imported_roles, srchIndexesDefault, accessible_indexes, totalAccess | rename imported_roles as inherited, srchIndexesAllowed as "accessible indexes", srchIndexesDefault as "default searchable indexes", totalAccess as "accessible index count" | join max=1 overwrite=1 type=outer usetime=0 role [ | rest splunk_server=local /services/authentication/users | mvexpand roles | stats count AS "user count" by roles | rename roles as role] | fillnull value=0 "user count" | sort 0 - "user count"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Knowledge Objects</title>
+      <table>
+        <title>Orphaned Content</title>
+        <search>
+          <query>| rest splunk_server=* /servicesNS/-/-/saved/searches
+| rename eai:acl.owner AS user
+| where user!="nobody" AND user!="splunk-system-user" AND user!="admin"
+| stats count, list(is_scheduled) AS is_scheduled, list(eai:acl.app) AS app list(title) AS reports by user, splunk_server
+| eval is_orphan="true"
+| join type=outer user
+    [| rest splunk_server=local /services/authentication/users
+    | stats count by title
+    | rename title AS user
+    | eval is_orphan="false"]
+| where is_orphan="true"
+| rename user as Username, count as "Number of Orphaned Searches", is_scheduled as "Actively Scheduled", app as App, reports as "Saved Searches", is_orphan as Status
+| replace "true" with "Severe" in Status
+| replace "1" with "Yes", "0" with "No"  in "Actively Scheduled"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="Status">
+          <colorPalette type="map">{"Severe":#D93F3C}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Sourcetype/Index-less eventtypes</title>
+        <search>
+          <query>| rest /services/saved/eventtypes splunk_server=local
+| where NOT (like(search,"%index=%") OR like(search,"%index =%") OR like(search,"%sourcetype=%") OR like(search,"%sourcetype =%"))
+| table splunk_server title search "eai:acl.app" tags "eai:acl.owner" disabled
+| rename title as "Name" "eai:acl.app" as app "eai:acl.owner" as owner</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Large Knowledge Bundles</title>
+        <search>
+          <query>index=_internal sourcetype=splunkd component=DistributedBundleReplicationManager bundle_file_size=* | rex field=bundle_file_size "(?&lt;bundle_size&gt;\d+)" | eval bundle_size_mb=bundle_size/1024</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Enabled Correlation Searches</title>
+        <search>
+          <query>| rest splunk_server=* count=0 /services/saved/searches | where 'action.correlationsearch.enabled'==1 AND disabled=0 | rename eai:acl.app as app, title as csearch_name, action.correlationsearch.label as csearch_label, action.notable.param.security_domain as security_domain | table csearch_name, csearch_label, app, cron_schedule dispatch.earliest_time dispatch.latest_time disabled</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Data Model Acceleration Status</title>
+        <search>
+          <query>| rest /services/admin/summarization by_tstats=t splunk_server=* count=0
+| eval datamodel=replace('summary.id',"DM_".'eai:acl.app'."_","")
+| join type=outer datamodel
+    [| rest /services/data/models
+    | fields title acceleration.cron_schedule
+    | rename acceleration.cron_schedule as cron title as datamodel]
+| sort 0 datamodel
+| eval retention(days)=if('summary.time_range'==0,"unlimited",'summary.time_range'/86400), complete(%)=round('summary.complete'*100,1), size(MB)=round('summary.size'/1048576,1), runDuration(s)=round(runDuration,1)
+| rename eai:acl.app AS app summary.* AS *
+| convert ctime(*_time)
+| fields datamodel app cron retention(days) earliest_time latest_time is_inprogress complete(%) size(MB) last_error
+| sort - size(MB)</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>DM Index/Sourcetype Breakdown</title>
+        <search>
+          <query>| tstats count WHERE index=* (index!=cim_modactions index!=*summary index!=notable index!=risk index!=threat_activity) earliest=-24h@h GROUPBY sourcetype index
+| join type=outer sourcetype index
+    [| rest splunk_server=* count=0 /servicesNS/-/-/admin/datamodel-files
+    | search title!=Incident_Management title!=Risk title!=Splunk_Audit title!=Threat_Intelligence title!=Identity_Management
+    | fields title
+    | map maxsearches=150 search="| tstats summariesonly=true allow_old_summaries=true count FROM datamodel=$title$ WHERE earliest=-24h@h GROUPBY index sourcetype source | eval datamodel=\"$title$\""
+    | stats values(datamodel) AS datamodel by sourcetype index]
+| eval datamodel=split(datamodel," ")
+| fillnull datamodel value="!No datamodel mapped!"
+| mvexpand datamodel
+| fields - count
+| stats list(*) AS * by datamodel
+| sort + datamodel</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Common Information Model Index Macros</title>
+        <search>
+          <query>| rest splunk_server=local /services/datamodel/model
+| search ("acceleration.allowed"=1 disabled=0)
+| rex field=acceleration "\"enabled\":(?&lt;enabled&gt;true|false),\""
+| search enabled=true
+| rex field=description "\"constraints\":(?&lt;constraints&gt;\[(.*?)\])"
+| table title, enabled, constraints
+| rex field=constraints "\`(?&lt;macro&gt;.*)\`"
+| join macro
+    [| rest splunk_server=local services/admin/macros
+    | table title, definition
+    | rename title as macro]
+| table title, enabled, constraints, macro, definition
+| rename contraints as Contraints, definition as "Definition", enabled as Enabled, macro as Macro, title as "Data Model"</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="Definition">
+          <colorPalette type="map">{"()":#D93F3C}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+</form>
