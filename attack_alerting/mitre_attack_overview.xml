@@ -53,7 +53,7 @@
   <row>
     <panel>
       <single>
-        <title>OotB Content Enabled</title>
+        <title>OotB Content Available and In Use</title>
         <search base="sseanalytics_base_1">
           <query>
 | table percent_enabled
@@ -69,7 +69,7 @@
     </panel>
     <panel>
       <single>
-        <title>OotB Content without Data Available</title>
+        <title>OotB Content Not Usable Today (No Data)</title>
         <search base="sseanalytics_base_1">
           <query>| table percent_missing
 | head 1</query>
@@ -85,7 +85,7 @@
     </panel>
     <panel>
       <single>
-        <title>OotB Content NOT Enabled, but Available</title>
+        <title>OotB Content Available and NOT In Use</title>
         <search base="sseanalytics_base_1">
           <query>| table percent_available
 | head 1</query>
@@ -211,6 +211,24 @@
         <option name="charting.drilldown">none</option>
         <option name="refresh.display">progressbar</option>
       </chart>
+    </panel>
+    <panel>
+      <single>
+        <title>ATT&amp;CK Aggregated Alarms</title>
+        <search>
+          <query>`notable`
+| search search_name="Threat - Dest with Multiple MITRE Tactics - Rule" NOT dest="#COMPUTERNAME#"
+| stats count</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0xf1813f","0xdc4e41"]</option>
+        <option name="rangeValues">[500,1000]</option>
+        <option name="unit">Alerts</option>
+        <option name="useColors">1</option>
+      </single>
     </panel>
     <panel>
       <chart>

@@ -1,7 +1,22 @@
-#20200603 BJC
-Initial add of MITRE ATT&CK Risk-Based Alerting content
+# 20200603 BJC
 
-#USAGE INSTRUCTIONS
+
+
+# Prerequisites
+1. Security Essentials v3.1.1+
+2. Enterprise Security 5.2+
+3. Ensure the use_cases lookup from SSE is shared 'globally'.
+
+# Release notes
+## 20200603 BJC
+- Initial add of MITRE ATT&CK Risk-Based Alerting content
+## 20200612 BJC
+- The Out-of-the-Box content lookup values are currently hardcoded. This will be made dynamic next release.
+- Added aggregate-based alert count to dashboard
+- Updated drilldown searches to enable raw data view
+
+
+# USAGE INSTRUCTIONS
 1. Follow associated guide in the accompanying powerpoint deck.
 2. Run data inventory check in Splunk Security Essentials (SSE).
 3. Enable ES integration under "Configuration" nav bar item in SSE.
