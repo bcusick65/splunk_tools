@@ -14,6 +14,8 @@
 - The Out-of-the-Box content lookup values are currently hardcoded. This will be made dynamic next release.
 - Added aggregate-based alert count to dashboard
 - Updated drilldown searches to enable raw data view
+## 20200622 BJC
+- Out-of-the-Box content lookups are now dynamic.
 
 
 # USAGE INSTRUCTIONS

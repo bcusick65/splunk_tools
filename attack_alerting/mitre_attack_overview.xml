@@ -32,11 +32,6 @@
 | eval "Use Case"='Use Case Orig',"Bookmark Status"=bookmark_status_display, Featured=highlight, "Data Availability"=data_available,Enabled=enabled,"Data Coverage"=data_available_numeric
 | eval "Data Source"=mvdedup('Data Source')
 | table Journey Status Title Description "Data Source" "Data Source Category" "Use Case" "MITRE Tactic" "MITRE Technique" App "Bookmark Status" Featured Enabled "Data Availability" "Data Coverage"
-| stats count by Status
-| addcoltotals
-| eval percent_missing=round((282/370)*100,2)
-| eval percent_available=round((85/370)*100,2)
-| eval percent_enabled=round((3/370)*100,2)
 </query>
     <earliest>-4h</earliest>
     <latest>now</latest>
@@ -55,14 +50,16 @@
       <single>
         <title>OotB Content Available and In Use</title>
         <search base="sseanalytics_base_1">
-          <query>
-| table percent_enabled
-| head 1</query>
+          <query>| search Status="Active"
+| stats count
+| eval percentage=round(((count/373)*100),1)
+| fields percentage</query>
         </search>
         <option name="colorMode">block</option>
         <option name="numberPrecision">0.00</option>
         <option name="rangeColors">["0xdc4e41","0xf8be34","0x53a051"]</option>
         <option name="rangeValues">[25,70]</option>
+        <option name="refresh.display">progressbar</option>
         <option name="unit">%</option>
         <option name="useColors">1</option>
       </single>
@@ -71,8 +68,10 @@
       <single>
         <title>OotB Content Not Usable Today (No Data)</title>
         <search base="sseanalytics_base_1">
-          <query>| table percent_missing
-| head 1</query>
+          <query>| search Status="Available"
+| stats count
+| eval percentage=round(((count/373)*100),1)
+| fields percentage</query>
         </search>
         <option name="colorMode">block</option>
         <option name="numberPrecision">0.00</option>
@@ -87,8 +86,10 @@
       <single>
         <title>OotB Content Available and NOT In Use</title>
         <search base="sseanalytics_base_1">
-          <query>| table percent_available
-| head 1</query>
+          <query>| search Status="Needs Data"
+| stats count
+| eval percentage=round(((count/373)*100),1)
+| fields percentage</query>
         </search>
         <option name="colorMode">block</option>
         <option name="numberPrecision">0.00</option>
