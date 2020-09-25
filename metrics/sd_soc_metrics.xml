@@ -1,5 +1,5 @@
 <form>
-  <label>SD SOC Metrics</label>
+  <label>Smile Direct SOC Metrics</label>
   <fieldset submitButton="false">
     <input type="time" token="field1">
       <label></label>
@@ -7,6 +7,19 @@
         <earliest>-24h@h</earliest>
         <latest>now</latest>
       </default>
+    </input>
+    <input type="multiselect" token="urgency_tok" searchWhenChanged="true">
+      <label>Urgency</label>
+      <choice value="*">All</choice>
+      <choice value="critical">Critical</choice>
+      <choice value="high">High</choice>
+      <choice value="medium">Medium</choice>
+      <choice value="low">Low</choice>
+      <choice value="informational">Informational</choice>
+      <valuePrefix>urgency=</valuePrefix>
+      <delimiter> OR </delimiter>
+      <default>high,critical</default>
+      <initialValue>high,critical</initialValue>
     </input>
   </fieldset>
   <row>
@@ -33,6 +46,32 @@
         <option name="rowNumbers">false</option>
         <option name="totalsRow">false</option>
         <option name="wrap">true</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Incident Assigning/Closing Tracking</title>
+      <table>
+        <search>
+          <query>| `incident_review` 
+| stats first(_time) as firsttime, last(_time) as latesttime, first(rule_name) as rule_name, first(reviewer) as assigner, last(reviewer) as last_editor, last(owner) as owner, last(comment) as latest_comment, last(status_label) as latest_status_label, last(urgency) as urgency by rule_id
+| eval firsttime=strftime(firsttime, "%m/%d/%Y")
+| eval latesttime=strftime(latesttime, "%m/%d/%Y")
+| fields firsttime assigner owner latesttime last_editor latest_status_label latest_comment urgency
+| rename firsttime as "Date of incident", assigner as "Who assigned it?", owner as "Assigned to", latesttime as "Last edited/closed", last_editor as "Last editor", latest_status_label as "Current status", latest_comment as "Last comment"</query>
+          <earliest>$field1.earliest$</earliest>
+          <latest>$field1.latest$</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="count">20</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">false</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">false</option>
       </table>
     </panel>
   </row>
@@ -88,7 +127,9 @@
       <chart>
         <search>
           <query>| `incident_review`
-| chart count by owner</query>
+| stats latest by rule_id
+| rename latest(*) as *
+| chart count by owner, status_label</query>
           <earliest>$field1.earliest$</earliest>
           <latest>$field1.latest$</latest>
           <sampleRatio>1</sampleRatio>
@@ -128,50 +169,6 @@
         <option name="trellis.scales.shared">1</option>
         <option name="trellis.size">medium</option>
       </chart>
-    </panel>
-  </row>
-  <row>
-    <panel>
-      <title>When Were Alerts Assigned?</title>
-      <table>
-        <search>
-          <query>| `incident_review`
-| stats first(_time) as _time first(rule_name) as rule_name by rule_id
-| fields _time rule_name rule_id</query>
-          <earliest>$field1.earliest$</earliest>
-          <latest>$field1.latest$</latest>
-          <sampleRatio>1</sampleRatio>
-        </search>
-        <option name="count">20</option>
-        <option name="dataOverlayMode">none</option>
-        <option name="drilldown">none</option>
-        <option name="percentagesRow">false</option>
-        <option name="refresh.display">progressbar</option>
-        <option name="rowNumbers">false</option>
-        <option name="totalsRow">false</option>
-        <option name="wrap">false</option>
-      </table>
-    </panel>
-    <panel>
-      <title>When Were Alerts Closed?</title>
-      <table>
-        <search>
-          <query>| `incident_review`
-| search status_label=closed OR status_label=resolved
-| table _time rule_name owner reviewer status_label comment rule_id</query>
-          <earliest>$field1.earliest$</earliest>
-          <latest>$field1.latest$</latest>
-          <sampleRatio>1</sampleRatio>
-        </search>
-        <option name="count">20</option>
-        <option name="dataOverlayMode">none</option>
-        <option name="drilldown">none</option>
-        <option name="percentagesRow">false</option>
-        <option name="refresh.display">progressbar</option>
-        <option name="rowNumbers">false</option>
-        <option name="totalsRow">false</option>
-        <option name="wrap">false</option>
-      </table>
     </panel>
   </row>
   <row>
