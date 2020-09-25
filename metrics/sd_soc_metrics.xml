@@ -1,5 +1,5 @@
 <form>
-  <label>Smile Direct SOC Metrics</label>
+  <label>SD SOC Metrics</label>
   <fieldset submitButton="false">
     <input type="time" token="field1">
       <label></label>
