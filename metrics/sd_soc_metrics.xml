@@ -145,9 +145,10 @@
 | lookup es_notable_events rule_name output urgency
 | stats latest by rule_id
 | rename latest(*) as *
-| eval latesttime=strptime(time, "%m/%d/%Y %H:%M:%S")
+| eval latesttime=time
 | addinfo
 | eval info_max_time = if(info_max_time="+Infinity","10000000000000000000",info_max_time)
+| where latesttime &gt; info_min_time AND latesttime &lt; info_max_time
 | search $urgency_tok$
 | chart count by owner, status_label</query>
           <earliest>$field1.earliest$</earliest>
