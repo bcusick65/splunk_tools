@@ -27,11 +27,15 @@
       <title>Alert Statuses</title>
       <table>
         <search>
-          <query>| `es_notable_events` 
-| stats sum(count) as count by status,urgency,owner 
-| `get_reviewstatuses` 
-| chart sum(count) as count over status_label by urgency 
-| rename status_label as status 
+          <query>| `es_notable_events`
+| addinfo
+| eval info_max_time = if(info_max_time="+Infinity","10000000000000000000",info_max_time)
+| eval latesttime=_time
+| where latesttime &gt; info_min_time AND latesttime &lt; info_max_time
+| stats sum(count) as count by status,urgency,owner
+| `get_reviewstatuses`
+| chart sum(count) as count over status_label by urgency
+| rename status_label as status
 | `sort_chart`
 | fillnull value="0"</query>
           <earliest>$field1.earliest$</earliest>
@@ -54,11 +58,16 @@
       <title>Incident Assigning/Closing Tracking</title>
       <table>
         <search>
-          <query>| `incident_review` 
+          <query>| `incident_review`
+| lookup es_notable_events rule_name output urgency
 | stats first(_time) as firsttime, last(_time) as latesttime, first(rule_name) as rule_name, first(reviewer) as assigner, last(reviewer) as last_editor, last(owner) as owner, last(comment) as latest_comment, last(status_label) as latest_status_label, last(urgency) as urgency by rule_id
+| addinfo
+| eval info_max_time = if(info_max_time="+Infinity","10000000000000000000",info_max_time)
+| where latesttime &gt; info_min_time AND latesttime &lt; info_max_time
+| search $urgency_tok$
 | eval firsttime=strftime(firsttime, "%m/%d/%Y")
 | eval latesttime=strftime(latesttime, "%m/%d/%Y")
-| fields firsttime assigner owner latesttime last_editor latest_status_label latest_comment urgency
+| fields rule_name firsttime assigner owner latesttime last_editor latest_status_label latest_comment urgency
 | rename firsttime as "Date of incident", assigner as "Who assigned it?", owner as "Assigned to", latesttime as "Last edited/closed", last_editor as "Last editor", latest_status_label as "Current status", latest_comment as "Last comment"</query>
           <earliest>$field1.earliest$</earliest>
           <latest>$field1.latest$</latest>
@@ -81,7 +90,13 @@
       <chart>
         <search>
           <query>| `incident_review`
-| chart count by reviewer</query>
+| lookup es_notable_events rule_name output urgency
+| stats count, last(_time) as latesttime, last(reviewer) as last_editor, last(status_label) as latest_status_label, last(urgency) as urgency by rule_id
+| addinfo
+| eval info_max_time = if(info_max_time="+Infinity","10000000000000000000",info_max_time)
+| where latesttime &gt; info_min_time AND latesttime &lt; info_max_time
+| search $urgency_tok$
+| chart dc(rule_id) as "Assigned Alerts" by last_editor</query>
           <earliest>$field1.earliest$</earliest>
           <latest>$field1.latest$</latest>
           <sampleRatio>1</sampleRatio>
@@ -127,8 +142,13 @@
       <chart>
         <search>
           <query>| `incident_review`
+| lookup es_notable_events rule_name output urgency
 | stats latest by rule_id
 | rename latest(*) as *
+| eval latesttime=strptime(time, "%m/%d/%Y %H:%M:%S")
+| addinfo
+| eval info_max_time = if(info_max_time="+Infinity","10000000000000000000",info_max_time)
+| search $urgency_tok$
 | chart count by owner, status_label</query>
           <earliest>$field1.earliest$</earliest>
           <latest>$field1.latest$</latest>
@@ -176,18 +196,19 @@
       <title>How long does it take to resolve an alert?</title>
       <table>
         <search>
-          <query>| tstats `summariesonly` earliest(_time) as _time from datamodel=Incident_Management.Notable_Events_Meta by source,Notable_Events_Meta.rule_id 
-| `drop_dm_object_name("Notable_Events_Meta")` 
-| `get_correlations` 
-| `get_current_status` 
-| search status_label="Closed" 
-| eval ttc=mvindex(review_time, 0) 
-| eval ttc=ttc-_time 
-| stats count avg(ttc) as avg_ttc,max(ttc) as max_ttc by rule_name 
-| sort - avg_ttc 
-| `uptime2string(avg_ttc, avg_ttc)` 
-| `uptime2string(max_ttc, max_ttc)` 
-| rename *_ttc* as *(time_to_closure)* 
+          <query>| tstats `summariesonly` earliest(_time) as _time from datamodel=Incident_Management.Notable_Events_Meta by source,Notable_Events_Meta.rule_id
+| `drop_dm_object_name("Notable_Events_Meta")`
+| `get_correlations`
+| `get_current_status`
+| lookup es_notable_events rule_name output urgency
+| search status_label="Closed" $urgency_tok$
+| eval ttc=mvindex(review_time, 0)
+| eval ttc=ttc-_time
+| stats count avg(ttc) as avg_ttc,max(ttc) as max_ttc by rule_name
+| sort - avg_ttc
+| `uptime2string(avg_ttc, avg_ttc)`
+| `uptime2string(max_ttc, max_ttc)`
+| rename *_ttc* as *(time_to_closure)*
 | fields - *_dec</query>
           <earliest>$field1.earliest$</earliest>
           <latest>$field1.latest$</latest>
